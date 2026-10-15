@@ -12,21 +12,36 @@ import {
 import {
   ArcRotateCamera,
   Color3,
+  DynamicTexture,
   Engine,
   HemisphericLight,
+  Matrix,
   Mesh,
   MeshBuilder,
   Node,
+  Ray,
   Scene,
   StandardMaterial,
   Vector3,
   VertexBuffer,
+  WebXRDefaultExperience,
   WebXRState,
 } from '@babylonjs/core';
-import { AdvancedDynamicTexture, Button, Control, StackPanel } from '@babylonjs/gui';
+import { AdvancedDynamicTexture, Button, Control, Rectangle, StackPanel, TextBlock, type TextWrapping } from '@babylonjs/gui';
 import * as anu from '@jpmorganchase/anu';
 import { scaleBand, scaleLinear, scaleOrdinal } from 'd3-scale';
-import { Bar, generateBars, generateSurface, loadSpotify, QUARTERS, REGIONS, SpotifyColumns } from './data';
+import {
+  Bar,
+  generateBars,
+  generateSurface,
+  loadSpotify,
+  loadSpotifyNames,
+  QUARTERS,
+  REGIONS,
+  SpotifyColumns,
+  SpotifyNames,
+} from './data';
+import { PointGrid } from './point-grid';
 
 type ChartType = 'scatter' | 'bar' | 'surface';
 
@@ -39,6 +54,7 @@ const CHARTS: { id: ChartType; label: string }[] = [
 // Every chart fills a 1m cube whose centre sits at roughly eye height.
 const CHART_CENTER_Y = 1.2;
 const VR_IDLE_STATUS = 'Click the goggles icon (bottom right) to enter VR.';
+const POINT_DIAMETER = 0.006;
 
 @Component({
   selector: 'app-charts-xr',
@@ -80,6 +96,8 @@ export class ChartsXr {
   protected readonly status = signal('Loading…');
   private readonly views = signal<Record<ChartType, Node> | null>(null);
   private vrButtons: Partial<Record<ChartType, Button>> = {};
+  private xr?: WebXRDefaultExperience;
+  private pointerInside = false;
 
   constructor() {
     const destroyRef = inject(DestroyRef);
@@ -142,7 +160,7 @@ export class ChartsXr {
 
   /**
    * Danceability (x), energy (y), popularity (z) and duration (colour) for every track. With ~130k
-   * points, separate meshes would be far too slow, so all points are thin instances of one small box:
+   * points, separate meshes would be far too slow, so all points are thin instances of one small sphere:
    * a single draw call. Anu's bindThinInstance helpers allocate a Matrix per point (and 3x the
    * buffer), so the instance buffers are written directly here; Anu still provides the chart root,
    * axes and colour scale.
@@ -161,22 +179,23 @@ export class ChartsXr {
     chart.positionY(CHART_CENTER_Y);
     const root = chart.selected[0];
 
-    const points = MeshBuilder.CreateBox('spotify-points', { size: 0.005 }, scene);
+    // A low-poly sphere: 130k instances of a smooth one would cost far more triangles than headsets can afford.
+    const points = MeshBuilder.CreateSphere('spotify-points', { diameter: POINT_DIAMETER, segments: 4 }, scene);
     points.parent = root;
     const mat = new StandardMaterial('spotify-mat', scene);
     mat.specularColor = Color3.Black();
     points.material = mat;
-    // Picking against 130k instances would make every VR controller ray expensive.
+    // Babylon's picking would test all 130k instances per ray; hover uses a PointGrid instead.
     points.isPickable = false;
 
     const matrices = new Float32Array(count * 16);
     const colors = new Float32Array(count * 4);
+    const positions = new Float32Array(count * 3);
     for (let i = 0; i < count; i++) {
       const m = i * 16;
+      positions.set([scaleX(data.danceability[i]), scaleY(data.energy[i]), scaleZ(data.popularity[i])], i * 3);
       matrices[m] = matrices[m + 5] = matrices[m + 10] = matrices[m + 15] = 1;
-      matrices[m + 12] = scaleX(data.danceability[i]);
-      matrices[m + 13] = scaleY(data.energy[i]);
-      matrices[m + 14] = scaleZ(data.popularity[i]);
+      matrices.set(positions.subarray(i * 3, i * 3 + 3), m + 12);
       const c = viridis(scaleC(data.duration_ms[i] / 60000));
       colors.set([c.r, c.g, c.b, 1], i * 4);
     }
@@ -186,7 +205,84 @@ export class ChartsXr {
 
     anu.createAxes('scatter-axes', scene, { parent: chart, scale: { x: scaleX, y: scaleY, z: scaleZ } });
     addAxisTitles(scene, root, { x: 'Danceability', y: 'Energy', z: 'Popularity' });
+    addColorLegend(scene, root, {
+      title: 'Duration (min)',
+      ticks: [0, 2, 4, 6, 8, 10],
+      color: (minutes) => viridis(scaleC(minutes)),
+      format: (minutes) => (minutes === 10 ? '10+' : String(minutes)),
+      // Beside the chart's right-hand corner as seen from the default camera.
+      position: new Vector3(0.8, 0, 0.8),
+    });
+    // Pick a little wider than the spheres themselves, which are only a few pixels across.
+    this.setupHover(scene, points, positions, new PointGrid(positions, POINT_DIAMETER));
     return root;
+  }
+
+  /**
+   * Details on demand: the track under the mouse, or under a VR controller's ray, is highlighted and
+   * labelled with its name and artist. The label is part of the scene so it also works in VR.
+   */
+  private setupHover(scene: Scene, points: Mesh, positions: Float32Array, grid: PointGrid): void {
+    const root = points.parent!;
+    const highlight = MeshBuilder.CreateSphere('spotify-hover', { diameter: POINT_DIAMETER * 2.5, segments: 8 }, scene);
+    highlight.parent = root;
+    const mat = new StandardMaterial('spotify-hover-mat', scene);
+    mat.emissiveColor = Color3.White();
+    mat.disableLighting = true;
+    highlight.material = mat;
+    highlight.isPickable = false;
+    // Rendering group 1 draws after the points with a cleared depth buffer, so nothing hides the hover.
+    highlight.renderingGroupId = 1;
+    highlight.setEnabled(false);
+    const label = createHoverLabel(scene, root);
+
+    let names: SpotifyNames | undefined;
+    let current = -1;
+    const show = (i: number) => {
+      current = i;
+      highlight.setEnabled(i >= 0);
+      label.mesh.setEnabled(i >= 0);
+      if (i < 0) return;
+      const [x, y, z] = positions.subarray(i * 3, i * 3 + 3);
+      highlight.position.set(x, y, z);
+      label.mesh.position.set(x, y + 0.06, z);
+      label.setText(names?.track[i] ?? 'Loading track names…', names?.artist[i] ?? '');
+    };
+    loadSpotifyNames()
+      .then((n) => {
+        names = n;
+        if (current >= 0) show(current);
+      })
+      .catch((err) => console.error(err));
+
+    const canvas = scene.getEngine().getRenderingCanvas()!;
+    canvas.addEventListener('pointermove', () => (this.pointerInside = true));
+    canvas.addEventListener('pointerleave', () => (this.pointerInside = false));
+    const toLocal = new Matrix();
+    scene.onBeforeRenderObservable.add(() => {
+      let hit = -1;
+      if (this.chart() === 'scatter') {
+        points.getWorldMatrix().invertToRef(toLocal);
+        for (const ray of this.pointerRays(scene)) {
+          hit = grid.pick(Ray.Transform(ray, toLocal));
+          if (hit >= 0) break;
+        }
+      }
+      if (hit !== current) show(hit);
+    });
+  }
+
+  /** World-space rays from the VR controllers when in VR, otherwise from the mouse. */
+  private pointerRays(scene: Scene): Ray[] {
+    if (this.xr?.baseExperience.state === WebXRState.IN_XR) {
+      return this.xr.input.controllers.map((controller) => {
+        const ray = new Ray(Vector3.Zero(), Vector3.Forward());
+        controller.getWorldPointerRayToRef(ray);
+        return ray;
+      });
+    }
+    if (!this.pointerInside || !scene.activeCamera) return [];
+    return [scene.createPickingRay(scene.pointerX, scene.pointerY, Matrix.Identity(), scene.activeCamera)];
   }
 
   private createBar(scene: Scene): Node {
@@ -282,6 +378,7 @@ export class ChartsXr {
     }
     const ground = anu.create('ground', 'floor', { width: 6, height: 6 }, {}, scene);
     const xr = await scene.createDefaultXRExperienceAsync({ floorMeshes: [ground] });
+    this.xr = xr;
     this.status.set(VR_IDLE_STATUS);
     xr.baseExperience.onStateChangedObservable.add((state) => {
       if (state === WebXRState.IN_XR) this.status.set('In VR');
@@ -314,6 +411,100 @@ function addAxisTitles(scene: Scene, parent: Node, titles: { x: string; y: strin
     title.position = position;
     title.rotation = rotation;
   }
+}
+
+/** A vertical colour ramp with tick labels, drawn once into a texture on a plane that turns to face the viewer. */
+function addColorLegend(
+  scene: Scene,
+  parent: Node,
+  opts: {
+    title: string;
+    ticks: number[];
+    color: (value: number) => Color3;
+    format: (value: number) => string;
+    position: Vector3;
+  },
+): void {
+  const [width, height] = [320, 640];
+  const texture = new DynamicTexture('legend-tex', { width, height }, scene, true);
+  texture.hasAlpha = true;
+  const ctx = texture.getContext() as unknown as CanvasRenderingContext2D;
+  ctx.fillStyle = 'rgb(0 0 0 / 0.55)';
+  ctx.fillRect(0, 0, width, height);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 36px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(opts.title, width / 2, 50);
+
+  const [top, bottom, barX, barWidth] = [110, height - 40, 70, 60];
+  const lo = opts.ticks[0];
+  const hi = opts.ticks[opts.ticks.length - 1];
+  const yOf = (v: number) => bottom - ((v - lo) / (hi - lo)) * (bottom - top);
+  const gradient = ctx.createLinearGradient(0, bottom, 0, top);
+  for (let s = 0; s <= 16; s++) gradient.addColorStop(s / 16, opts.color(lo + ((hi - lo) * s) / 16).toHexString());
+  ctx.fillStyle = gradient;
+  ctx.fillRect(barX, top, barWidth, bottom - top);
+
+  ctx.fillStyle = '#fff';
+  ctx.font = '34px system-ui, sans-serif';
+  ctx.textAlign = 'left';
+  for (const v of opts.ticks) {
+    const y = yOf(v);
+    ctx.fillRect(barX + barWidth, y - 1.5, 14, 3);
+    ctx.fillText(opts.format(v), barX + barWidth + 24, y);
+  }
+  texture.update();
+
+  const plane = MeshBuilder.CreatePlane('legend', { width: 0.24, height: 0.48 }, scene);
+  plane.parent = parent;
+  plane.position = opts.position;
+  plane.billboardMode = Mesh.BILLBOARDMODE_Y;
+  plane.isPickable = false;
+  const mat = new StandardMaterial('legend-mat', scene);
+  mat.emissiveTexture = texture;
+  mat.opacityTexture = texture;
+  mat.disableLighting = true;
+  plane.material = mat;
+}
+
+/** A two-line label (track, artist) on a plane that always faces the viewer. */
+function createHoverLabel(scene: Scene, parent: Node): { mesh: Mesh; setText: (title: string, subtitle: string) => void } {
+  const mesh = MeshBuilder.CreatePlane('hover-label', { width: 0.4, height: 0.1 }, scene);
+  mesh.parent = parent;
+  mesh.billboardMode = Mesh.BILLBOARDMODE_ALL;
+  mesh.isPickable = false;
+  mesh.renderingGroupId = 1;
+  mesh.setEnabled(false);
+
+  const ui = AdvancedDynamicTexture.CreateForMesh(mesh, 1024, 256);
+  const box = new Rectangle();
+  box.background = 'rgb(0 0 0 / 0.75)';
+  box.cornerRadius = 24;
+  box.thickness = 0;
+  ui.addControl(box);
+  const lines = new StackPanel();
+  box.addControl(lines);
+  const line = (fontSize: number, color: string, height: string) => {
+    const text = new TextBlock();
+    text.fontSize = fontSize;
+    text.color = color;
+    text.height = height;
+    text.paddingLeft = text.paddingRight = '32px';
+    text.textWrapping = 2 satisfies TextWrapping; // TextWrapping.Ellipsis (a const enum, unusable with isolatedModules)
+    lines.addControl(text);
+    return text;
+  };
+  const title = line(96, '#fff', '128px');
+  const subtitle = line(72, '#bbb', '96px');
+  title.fontWeight = 'bold';
+  return {
+    mesh,
+    setText: (t, s) => {
+      title.text = t;
+      subtitle.text = s;
+    },
+  };
 }
 
 /** One shared material per category keeps draw calls low on standalone headsets. */

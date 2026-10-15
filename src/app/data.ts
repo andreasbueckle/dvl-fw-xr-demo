@@ -23,6 +23,18 @@ export async function loadSpotify(): Promise<SpotifyColumns> {
   return res.json();
 }
 
+/** Track and artist names, index-aligned with SpotifyColumns. */
+export interface SpotifyNames {
+  track: string[];
+  artist: string[];
+}
+
+export async function loadSpotifyNames(): Promise<SpotifyNames> {
+  const res = await fetch('data/spotify-names.json');
+  if (!res.ok) throw new Error(`Failed to load Spotify names (${res.status}). Run "npm run data".`);
+  return res.json();
+}
+
 export interface Bar {
   quarter: string;
   region: string;

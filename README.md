@@ -7,8 +7,13 @@ Minimal Angular + [Babylon.js](https://www.babylonjs.com/) app that renders a 3D
 
 The Spotify chart plots danceability (x), energy (y) and popularity (z), coloured by duration (Viridis, 0–10 min; longer tracks clamp to the top colour), for all
 ~130k tracks in `data/SpotifyAudioFeaturesApril2019.csv`. `npm run data` extracts just those
-columns into `public/data/spotify.json` (~1.9 MB, ~0.6 MB gzipped); it runs automatically before
-`start`, `start:xr` and `build`, and the output is git-ignored.
+columns into `public/data/spotify.json`, plus track and artist names into
+`public/data/spotify-names.json` (~5 MB, ~1.9 MB gzipped), which is loaded after first render for
+hover labels. It runs automatically before `start`, `start:xr` and `build`, and the output is
+git-ignored.
+
+Hovering over a sphere with the mouse, or pointing at one with a VR controller, highlights it and
+shows the track and artist. A colour legend for duration sits beside the chart.
 
 ## Run
 
@@ -27,6 +32,7 @@ When `immersive-vr` is supported, a goggles button appears in the bottom-right c
 ## Layout
 
 - `src/app/charts-xr.ts` — Babylon scene with Spotify scatter (thin instances), bar and surface charts (Anu), chart switcher (HTML + in-VR panel), WebXR setup
+- `src/app/point-grid.ts` — spatial grid for fast ray picking of the ~130k scatter points
 - `src/app/data.ts` — Spotify loader plus synthetic data for the bar and surface charts
 - `scripts/prepare-spotify.mjs` — CSV → compact JSON preprocessing
 - `src/app/app.ts` — lazy-loads the scene with `@defer` so the initial bundle stays ~125 kB
