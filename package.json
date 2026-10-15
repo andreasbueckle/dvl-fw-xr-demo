@@ -1,0 +1,41 @@
+{
+  "name": "dvl-fw-xr-demo",
+  "version": "0.0.0",
+  "scripts": {
+    "ng": "ng",
+    "start": "ng serve",
+    "build": "ng build",
+    "watch": "ng build --watch --configuration development",
+    "start:xr": "ng serve --host 0.0.0.0 --ssl",
+    "data": "node scripts/prepare-spotify.mjs",
+    "prestart": "npm run data",
+    "prebuild": "npm run data",
+    "prestart:xr": "npm run data"
+  },
+  "private": true,
+  "packageManager": "npm@11.12.1",
+  "dependencies": {
+    "@angular/common": "^22.2.0",
+    "@angular/compiler": "^22.2.0",
+    "@angular/core": "^22.2.0",
+    "@angular/forms": "^22.2.0",
+    "@angular/platform-browser": "^22.2.0",
+    "@angular/router": "^22.2.0",
+    "@babylonjs/core": "^8.56.2",
+    "@babylonjs/gui": "^8.56.2",
+    "@jpmorganchase/anu": "^1.0.1",
+    "d3-scale": "^4.0.2",
+    "rxjs": "~7.8.0",
+    "tslib": "^2.3.0"
+  },
+  "devDependencies": {
+    "@angular/build": "^22.2.2",
+    "@angular/cli": "^22.2.2",
+    "@angular/compiler-cli": "^22.2.0",
+    "@types/d3-dsv": "^3.0.7",
+    "@types/d3-scale": "^4.0.9",
+    "d3-dsv": "^3.0.1",
+    "prettier": "^3.8.1",
+    "typescript": "~6.0.2"
+  }
+}
