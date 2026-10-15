@@ -57,7 +57,7 @@ const CHARTS: { id: ChartType; label: string }[] = [
 // Every chart fills a 1m cube whose centre sits at roughly eye height.
 const CHART_CENTER_Y = 1.2;
 const VR_IDLE_STATUS = 'Click the goggles icon (bottom right) to enter VR.';
-const POINT_DIAMETER = 0.006;
+const POINT_SIZE = 0.005;
 const FLY_HINT = 'W A S D / arrows: move · E / Q: up / down · drag: look';
 
 @Component({
@@ -223,7 +223,7 @@ export class ChartsXr {
 
   /**
    * Danceability (x), energy (y), popularity (z) and duration (colour) for every track. With ~130k
-   * points, separate meshes would be far too slow, so all points are thin instances of one small sphere:
+   * points, separate meshes would be far too slow, so all points are thin instances of one small box:
    * a single draw call. Anu's bindThinInstance helpers allocate a Matrix per point (and 3x the
    * buffer), so the instance buffers are written directly here; Anu still provides the chart root,
    * axes and colour scale.
@@ -242,8 +242,8 @@ export class ChartsXr {
     chart.positionY(CHART_CENTER_Y);
     const root = chart.selected[0];
 
-    // A low-poly sphere: 130k instances of a smooth one would cost far more triangles than headsets can afford.
-    const points = MeshBuilder.CreateSphere('spotify-points', { diameter: POINT_DIAMETER, segments: 4 }, scene);
+    // Boxes, not spheres: at 12 triangles each, 130k of them stay affordable on standalone headsets.
+    const points = MeshBuilder.CreateBox('spotify-points', { size: POINT_SIZE }, scene);
     points.parent = root;
     const mat = new StandardMaterial('spotify-mat', scene);
     mat.specularColor = Color3.Black();
@@ -276,8 +276,8 @@ export class ChartsXr {
       // Beside the chart's right-hand corner as seen from the default camera.
       position: new Vector3(0.8, 0, 0.8),
     });
-    // Pick a little wider than the spheres themselves, which are only a few pixels across.
-    this.setupHover(scene, points, positions, new PointGrid(positions, POINT_DIAMETER));
+    // Pick a little wider than the boxes themselves, which are only a few pixels across.
+    this.setupHover(scene, points, positions, new PointGrid(positions, POINT_SIZE));
     return root;
   }
 
@@ -287,7 +287,7 @@ export class ChartsXr {
    */
   private setupHover(scene: Scene, points: Mesh, positions: Float32Array, grid: PointGrid): void {
     const root = points.parent!;
-    const highlight = MeshBuilder.CreateSphere('spotify-hover', { diameter: POINT_DIAMETER * 2.5, segments: 8 }, scene);
+    const highlight = MeshBuilder.CreateBox('spotify-hover', { size: POINT_SIZE * 2.5 }, scene);
     highlight.parent = root;
     const mat = new StandardMaterial('spotify-hover-mat', scene);
     mat.emissiveColor = Color3.White();

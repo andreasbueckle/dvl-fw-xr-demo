@@ -13,7 +13,7 @@ labels are turned on. It runs automatically before `start`, `start:xr` and `buil
 git-ignored.
 
 With the **Details** button turned on (it is off by default; there is one in the toolbar and one
-on the in-VR panel), hovering over a sphere with the mouse, or pointing at one with a VR controller,
+on the in-VR panel), hovering over a point with the mouse, or pointing at one with a VR controller,
 highlights it and shows the track and artist. A colour legend for duration sits beside the chart.
 
 ## Run
