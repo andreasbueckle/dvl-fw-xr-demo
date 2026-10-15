@@ -78,6 +78,11 @@ const FLY_HINT = 'W A S D / arrows: move · E / Q: up / down · drag: look';
         <button type="button" [class.active]="nav() === 'orbit'" [attr.aria-pressed]="nav() === 'orbit'" (click)="setNav('orbit')">Orbit</button>
         <button type="button" [class.active]="nav() === 'fly'" [attr.aria-pressed]="nav() === 'fly'" (click)="setNav('fly')">Fly</button>
       </div>
+      <div class="switcher">
+        <button type="button" [class.active]="hover()" [attr.aria-pressed]="hover()" title="Show track and artist on hover" (click)="hover.set(!hover())">
+          Details
+        </button>
+      </div>
     </div>
     @if (nav() === 'fly') {
       <div class="hint">{{ flyHint }}</div>
@@ -110,10 +115,13 @@ export class ChartsXr {
   protected readonly chart = signal<ChartType>('scatter');
   protected readonly status = signal('Loading…');
   protected readonly nav = signal<NavMode>('orbit');
+  /** Details on demand (hover labels) for the Spotify chart; off until the user turns it on. */
+  protected readonly hover = signal(false);
   protected readonly flyHint = FLY_HINT;
   private cameras?: { scene: Scene; orbit: ArcRotateCamera; fly: UniversalCamera };
   private readonly views = signal<Record<ChartType, Node> | null>(null);
   private vrButtons: Partial<Record<ChartType, Button>> = {};
+  private vrHoverButton?: Button;
   private xr?: WebXRDefaultExperience;
   private pointerInside = false;
 
@@ -130,6 +138,11 @@ export class ChartsXr {
         const button = this.vrButtons[id];
         if (button) button.background = id === active ? '#2f6fde' : '#333a';
       }
+    });
+
+    effect(() => {
+      const on = this.hover();
+      if (this.vrHoverButton) this.vrHoverButton.background = on ? '#2f6fde' : '#333a';
     });
 
     afterNextRender(() => {
@@ -287,6 +300,7 @@ export class ChartsXr {
     const label = createHoverLabel(scene, root);
 
     let names: SpotifyNames | undefined;
+    let namesRequested = false;
     let current = -1;
     const show = (i: number) => {
       current = i;
@@ -298,12 +312,16 @@ export class ChartsXr {
       label.mesh.position.set(x, y + 0.06, z);
       label.setText(names?.track[i] ?? 'Loading track names…', names?.artist[i] ?? '');
     };
-    loadSpotifyNames()
-      .then((n) => {
-        names = n;
-        if (current >= 0) show(current);
-      })
-      .catch((err) => console.error(err));
+    // The names file is ~2 MB, so only fetch it once someone actually turns hover on.
+    const requestNames = () => {
+      namesRequested = true;
+      loadSpotifyNames()
+        .then((n) => {
+          names = n;
+          if (current >= 0) show(current);
+        })
+        .catch((err) => console.error(err));
+    };
 
     const canvas = scene.getEngine().getRenderingCanvas()!;
     canvas.addEventListener('pointermove', () => (this.pointerInside = true));
@@ -311,7 +329,8 @@ export class ChartsXr {
     const toLocal = new Matrix();
     scene.onBeforeRenderObservable.add(() => {
       let hit = -1;
-      if (this.chart() === 'scatter') {
+      if (this.hover() && this.chart() === 'scatter') {
+        if (!namesRequested) requestNames();
         points.getWorldMatrix().invertToRef(toLocal);
         for (const ray of this.pointerRays(scene)) {
           hit = grid.pick(Ray.Transform(ray, toLocal));
@@ -388,19 +407,19 @@ export class ChartsXr {
 
   /** HTML buttons are invisible inside an immersive session, so mirror them on a panel in the scene. */
   private createVrPanel(scene: Scene): void {
-    const plane = MeshBuilder.CreatePlane('chart-switcher', { width: 0.6, height: 0.12 }, scene);
+    const plane = MeshBuilder.CreatePlane('chart-switcher', { width: 0.8, height: 0.12 }, scene);
     // In front of the chart, on the side the default camera views it from, tilted up towards the viewer.
     plane.position = new Vector3(0.75, CHART_CENTER_Y - 0.65, -0.75);
     plane.rotation = new Vector3(Math.PI / 6, -Math.PI / 4, 0);
 
-    const ui = AdvancedDynamicTexture.CreateForMesh(plane, 1000, 200);
+    const ui = AdvancedDynamicTexture.CreateForMesh(plane, 1340, 200);
     const row = new StackPanel();
     row.isVertical = false;
     row.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_CENTER;
     ui.addControl(row);
 
-    for (const { id, label } of CHARTS) {
-      const button = Button.CreateSimpleButton(`vr-${id}`, label);
+    const addButton = (name: string, label: string, onClick: () => void) => {
+      const button = Button.CreateSimpleButton(name, label);
       button.width = '320px';
       button.height = '180px';
       button.paddingLeft = button.paddingRight = '10px';
@@ -409,10 +428,13 @@ export class ChartsXr {
       button.cornerRadius = 20;
       button.thickness = 0;
       button.background = '#333a';
-      button.onPointerUpObservable.add(() => this.chart.set(id));
+      button.onPointerUpObservable.add(onClick);
       row.addControl(button);
-      this.vrButtons[id] = button;
-    }
+      return button;
+    };
+    for (const { id, label } of CHARTS) this.vrButtons[id] = addButton(`vr-${id}`, label, () => this.chart.set(id));
+    this.vrHoverButton = addButton('vr-hover', 'Details', () => this.hover.update((on) => !on));
+    this.vrHoverButton.background = this.hover() ? '#2f6fde' : '#333a';
     // The effect may already have run before the buttons existed; re-trigger it.
     this.views.update((v) => (v ? { ...v } : v));
   }

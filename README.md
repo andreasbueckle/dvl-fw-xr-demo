@@ -8,12 +8,13 @@ Minimal Angular + [Babylon.js](https://www.babylonjs.com/) app that renders a 3D
 The Spotify chart plots danceability (x), energy (y) and popularity (z), coloured by duration (Viridis, 0–10 min; longer tracks clamp to the top colour), for all
 ~130k tracks in `data/SpotifyAudioFeaturesApril2019.csv`. `npm run data` extracts just those
 columns into `public/data/spotify.json`, plus track and artist names into
-`public/data/spotify-names.json` (~5 MB, ~1.9 MB gzipped), which is loaded after first render for
-hover labels. It runs automatically before `start`, `start:xr` and `build`, and the output is
+`public/data/spotify-names.json` (~5 MB, ~1.9 MB gzipped), which is only fetched once hover
+labels are turned on. It runs automatically before `start`, `start:xr` and `build`, and the output is
 git-ignored.
 
-Hovering over a sphere with the mouse, or pointing at one with a VR controller, highlights it and
-shows the track and artist. A colour legend for duration sits beside the chart.
+With the **Details** button turned on (it is off by default; there is one in the toolbar and one
+on the in-VR panel), hovering over a sphere with the mouse, or pointing at one with a VR controller,
+highlights it and shows the track and artist. A colour legend for duration sits beside the chart.
 
 ## Run
 
