@@ -62,7 +62,7 @@ const VR_IDLE_STATUS = 'Click the goggles icon (bottom right) to enter VR.';
 const POINT_SIZE = 0.005;
 const MAX_SCALE = 10;
 const FLY_SPEED = 0.03;
-const XR_MOVEMENT_SPEED = 0.3;
+const XR_MOVEMENT_SPEED = 0.03;
 const FLY_HINT = 'W A S D / arrows: move · E / Q: up / down · drag: look';
 
 @Component({
@@ -211,7 +211,7 @@ export class ChartsXr {
     // Free-flying alternative to the orbit camera; it takes over the orbit camera's pose when enabled.
     const fly = new UniversalCamera('fly', camera.position.clone(), scene);
     fly.minZ = camera.minZ;
-    // Babylon scales speed by frame time and inertia; this works out to roughly 1 m/s, a brisk pace for a 1m chart.
+    // Babylon scales speed by frame time and inertia; this works out to roughly 0.1 m/s, slow enough for close inspection.
     fly.speed = FLY_SPEED;
     fly.keysUp = [87, 38]; // W, ↑
     fly.keysDown = [83, 40]; // S, ↓
@@ -520,7 +520,11 @@ export class ChartsXr {
       );
       return;
     }
-    anu.create('ground', 'floor', { width: 6, height: 6 }, {}, scene);
+    const floor = anu.create('ground', 'floor', { width: 6, height: 6 }, {}, scene);
+    const floorMat = new StandardMaterial('floor-mat', scene);
+    floorMat.diffuseColor = Color3.Black();
+    floorMat.specularColor = Color3.Black();
+    floor.material = floorMat;
     // Fly instead of teleporting: the left thumbstick moves towards wherever the user is looking
     // (including up and down), the right thumbstick turns.
     const xr = await scene.createDefaultXRExperienceAsync({ disableTeleportation: true });
