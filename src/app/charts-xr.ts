@@ -22,14 +22,16 @@ import {
   Ray,
   Scene,
   StandardMaterial,
+  TransformNode,
   UniversalCamera,
   Vector3,
   VertexBuffer,
+  WebXRControllerMovement,
   WebXRDefaultExperience,
   WebXRFeatureName,
   WebXRState,
 } from '@babylonjs/core';
-import { AdvancedDynamicTexture, Button, Control, Rectangle, StackPanel, TextBlock, type TextWrapping } from '@babylonjs/gui';
+import { AdvancedDynamicTexture, Button, Control, Rectangle, Slider, StackPanel, TextBlock, type TextWrapping } from '@babylonjs/gui';
 import * as anu from '@jpmorganchase/anu';
 import { scaleBand, scaleLinear, scaleOrdinal } from 'd3-scale';
 import {
@@ -58,6 +60,9 @@ const CHARTS: { id: ChartType; label: string }[] = [
 const CHART_CENTER_Y = 1.2;
 const VR_IDLE_STATUS = 'Click the goggles icon (bottom right) to enter VR.';
 const POINT_SIZE = 0.005;
+const MAX_SCALE = 10;
+const FLY_SPEED = 0.03;
+const XR_MOVEMENT_SPEED = 0.3;
 const FLY_HINT = 'W A S D / arrows: move · E / Q: up / down · drag: look';
 
 @Component({
@@ -78,6 +83,11 @@ const FLY_HINT = 'W A S D / arrows: move · E / Q: up / down · drag: look';
         <button type="button" [class.active]="nav() === 'orbit'" [attr.aria-pressed]="nav() === 'orbit'" (click)="setNav('orbit')">Orbit</button>
         <button type="button" [class.active]="nav() === 'fly'" [attr.aria-pressed]="nav() === 'fly'" (click)="setNav('fly')">Fly</button>
       </div>
+      <label class="switcher scale">
+        Scale
+        <input type="range" min="1" [max]="maxScale" step="0.1" [value]="scale()" (input)="scale.set($any($event.target).valueAsNumber)" />
+        <span class="scale-value">×{{ scale().toFixed(1) }}</span>
+      </label>
       <div class="switcher">
         <button type="button" [class.active]="hover()" [attr.aria-pressed]="hover()" title="Show track and artist on hover" (click)="hover.set(!hover())">
           Details
@@ -97,6 +107,9 @@ const FLY_HINT = 'W A S D / arrows: move · E / Q: up / down · drag: look';
     }
     .toolbar { position: absolute; top: 12px; right: 12px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
     .switcher { display: flex; gap: 4px; padding: 4px; background: rgb(0 0 0 / 0.55); border-radius: 8px; }
+    .scale { align-items: center; gap: 8px; padding: 4px 10px; color: #ddd; }
+    .scale input { width: 120px; accent-color: #2f6fde; }
+    .scale-value { min-width: 3.5ch; font-variant-numeric: tabular-nums; }
     .hint {
       position: absolute; bottom: 12px; left: 12px; padding: 6px 10px;
       color: #ddd; background: rgb(0 0 0 / 0.55); border-radius: 6px;
@@ -117,6 +130,13 @@ export class ChartsXr {
   protected readonly nav = signal<NavMode>('orbit');
   /** Details on demand (hover labels) for the Spotify chart; off until the user turns it on. */
   protected readonly hover = signal(false);
+  /** Spreads the charts out by this factor; the Spotify cubes keep their size. */
+  protected readonly scale = signal(1);
+  protected readonly maxScale = MAX_SCALE;
+  private scatterPoints?: { mesh: Mesh; matrices: Float32Array };
+  private xrMovement?: WebXRControllerMovement;
+  private vrScaleSlider?: Slider;
+  private vrScaleLabel?: TextBlock;
   protected readonly flyHint = FLY_HINT;
   private cameras?: { scene: Scene; orbit: ArcRotateCamera; fly: UniversalCamera };
   private readonly views = signal<Record<ChartType, Node> | null>(null);
@@ -138,6 +158,24 @@ export class ChartsXr {
         const button = this.vrButtons[id];
         if (button) button.background = id === active ? '#2f6fde' : '#333a';
       }
+    });
+
+    effect(() => {
+      const scale = this.scale();
+      const views = this.views();
+      if (!views) return;
+      for (const { id } of CHARTS) (views[id] as TransformNode).scaling.setAll(scale);
+      // Shrink each cube by the same factor in its own space so it stays the same size in the world.
+      if (this.scatterPoints) {
+        const { mesh, matrices } = this.scatterPoints;
+        for (let m = 0; m < matrices.length; m += 16) matrices[m] = matrices[m + 5] = matrices[m + 10] = 1 / scale;
+        mesh.thinInstanceBufferUpdated('matrix');
+      }
+      // Keep the time it takes to fly across the chart about the same.
+      if (this.cameras) this.cameras.fly.speed = FLY_SPEED * scale;
+      if (this.xrMovement) this.xrMovement.movementSpeed = XR_MOVEMENT_SPEED * scale;
+      if (this.vrScaleSlider) this.vrScaleSlider.value = scale;
+      if (this.vrScaleLabel) this.vrScaleLabel.text = scaleLabel(scale);
     });
 
     effect(() => {
@@ -174,7 +212,7 @@ export class ChartsXr {
     const fly = new UniversalCamera('fly', camera.position.clone(), scene);
     fly.minZ = camera.minZ;
     // Babylon scales speed by frame time and inertia; this works out to roughly 1 m/s, a brisk pace for a 1m chart.
-    fly.speed = 0.03;
+    fly.speed = FLY_SPEED;
     fly.keysUp = [87, 38]; // W, ↑
     fly.keysDown = [83, 40]; // S, ↓
     fly.keysLeft = [65, 37]; // A, ←
@@ -262,7 +300,9 @@ export class ChartsXr {
       const c = viridis(scaleC(data.duration_ms[i] / 60000));
       colors.set([c.r, c.g, c.b, 1], i * 4);
     }
-    points.thinInstanceSetBuffer('matrix', matrices, 16, true);
+    // Not static: the scale slider rewrites the instance scaling.
+    points.thinInstanceSetBuffer('matrix', matrices, 16, false);
+    this.scatterPoints = { mesh: points, matrices };
     points.thinInstanceSetBuffer('color', colors, 4, true);
     points.thinInstanceRefreshBoundingInfo();
 
@@ -286,9 +326,8 @@ export class ChartsXr {
    * labelled with its name and artist. The label is part of the scene so it also works in VR.
    */
   private setupHover(scene: Scene, points: Mesh, positions: Float32Array, grid: PointGrid): void {
-    const root = points.parent!;
+    // The highlight and label live in world space, outside the scaled chart, so they keep their size.
     const highlight = MeshBuilder.CreateBox('spotify-hover', { size: POINT_SIZE * 2.5 }, scene);
-    highlight.parent = root;
     const mat = new StandardMaterial('spotify-hover-mat', scene);
     mat.emissiveColor = Color3.White();
     mat.disableLighting = true;
@@ -297,7 +336,7 @@ export class ChartsXr {
     // Rendering group 1 draws after the points with a cleared depth buffer, so nothing hides the hover.
     highlight.renderingGroupId = 1;
     highlight.setEnabled(false);
-    const label = createHoverLabel(scene, root);
+    const label = createHoverLabel(scene);
 
     let names: SpotifyNames | undefined;
     let namesRequested = false;
@@ -308,8 +347,8 @@ export class ChartsXr {
       label.mesh.setEnabled(i >= 0);
       if (i < 0) return;
       const [x, y, z] = positions.subarray(i * 3, i * 3 + 3);
-      highlight.position.set(x, y, z);
-      label.mesh.position.set(x, y + 0.06, z);
+      Vector3.TransformCoordinatesFromFloatsToRef(x, y, z, points.getWorldMatrix(), highlight.position);
+      label.mesh.position.copyFrom(highlight.position).addInPlaceFromFloats(0, 0.06, 0);
       label.setText(names?.track[i] ?? 'Loading track names…', names?.artist[i] ?? '');
     };
     // The names file is ~2 MB, so only fetch it once someone actually turns hover on.
@@ -327,17 +366,22 @@ export class ChartsXr {
     canvas.addEventListener('pointermove', () => (this.pointerInside = true));
     canvas.addEventListener('pointerleave', () => (this.pointerInside = false));
     const toLocal = new Matrix();
+    let lastWorldUpdate = -1;
     scene.onBeforeRenderObservable.add(() => {
       let hit = -1;
       if (this.hover() && this.chart() === 'scatter') {
         if (!namesRequested) requestNames();
         points.getWorldMatrix().invertToRef(toLocal);
         for (const ray of this.pointerRays(scene)) {
-          hit = grid.pick(Ray.Transform(ray, toLocal));
+          // Shrink the pick radius with the scale so it matches the cubes' unchanged world size.
+          hit = grid.pick(Ray.Transform(ray, toLocal), POINT_SIZE / this.scale());
           if (hit >= 0) break;
         }
       }
       if (hit !== current) show(hit);
+      // Re-place the highlight if the slider moved the hovered cube.
+      else if (hit >= 0 && points.getWorldMatrix().updateFlag !== lastWorldUpdate) show(hit);
+      lastWorldUpdate = points.getWorldMatrix().updateFlag;
     });
   }
 
@@ -407,16 +451,19 @@ export class ChartsXr {
 
   /** HTML buttons are invisible inside an immersive session, so mirror them on a panel in the scene. */
   private createVrPanel(scene: Scene): void {
-    const plane = MeshBuilder.CreatePlane('chart-switcher', { width: 0.8, height: 0.12 }, scene);
+    const plane = MeshBuilder.CreatePlane('chart-switcher', { width: 0.8, height: 0.22 }, scene);
     // In front of the chart, on the side the default camera views it from, tilted up towards the viewer.
     plane.position = new Vector3(0.75, CHART_CENTER_Y - 0.65, -0.75);
     plane.rotation = new Vector3(Math.PI / 6, -Math.PI / 4, 0);
 
-    const ui = AdvancedDynamicTexture.CreateForMesh(plane, 1340, 200);
+    const ui = AdvancedDynamicTexture.CreateForMesh(plane, 1340, 368);
+    const rows = new StackPanel();
+    ui.addControl(rows);
     const row = new StackPanel();
     row.isVertical = false;
+    row.height = '190px';
     row.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_CENTER;
-    ui.addControl(row);
+    rows.addControl(row);
 
     const addButton = (name: string, label: string, onClick: () => void) => {
       const button = Button.CreateSimpleButton(name, label);
@@ -435,6 +482,31 @@ export class ChartsXr {
     for (const { id, label } of CHARTS) this.vrButtons[id] = addButton(`vr-${id}`, label, () => this.chart.set(id));
     this.vrHoverButton = addButton('vr-hover', 'Details', () => this.hover.update((on) => !on));
     this.vrHoverButton.background = this.hover() ? '#2f6fde' : '#333a';
+
+    const scaleRow = new StackPanel();
+    scaleRow.isVertical = false;
+    scaleRow.height = '170px';
+    rows.addControl(scaleRow);
+    const scaleText = new TextBlock('vr-scale-label', scaleLabel(this.scale()));
+    scaleText.width = '360px';
+    scaleText.color = 'white';
+    scaleText.fontSize = 64;
+    scaleRow.addControl(scaleText);
+    const slider = new Slider('vr-scale');
+    slider.minimum = 1;
+    slider.maximum = MAX_SCALE;
+    slider.step = 0.1;
+    slider.value = this.scale();
+    slider.width = '900px';
+    slider.height = '80px';
+    slider.color = '#2f6fde';
+    slider.background = '#333a';
+    slider.thumbColor = 'white';
+    slider.isThumbCircle = true;
+    slider.onValueChangedObservable.add((value) => this.scale.set(value));
+    scaleRow.addControl(slider);
+    this.vrScaleSlider = slider;
+    this.vrScaleLabel = scaleText;
     // The effect may already have run before the buttons existed; re-trigger it.
     this.views.update((v) => (v ? { ...v } : v));
   }
@@ -452,12 +524,12 @@ export class ChartsXr {
     // Fly instead of teleporting: the left thumbstick moves towards wherever the user is looking
     // (including up and down), the right thumbstick turns.
     const xr = await scene.createDefaultXRExperienceAsync({ disableTeleportation: true });
-    xr.baseExperience.featuresManager.enableFeature(WebXRFeatureName.MOVEMENT, 'latest', {
+    this.xrMovement = xr.baseExperience.featuresManager.enableFeature(WebXRFeatureName.MOVEMENT, 'latest', {
       xrInput: xr.input,
       movementOrientationFollowsViewerPose: true,
       movementOrientationFollowsController: false,
-      movementSpeed: 0.3,
-    });
+      movementSpeed: XR_MOVEMENT_SPEED * this.scale(),
+    }) as WebXRControllerMovement;
     this.xr = xr;
     this.status.set(VR_IDLE_STATUS);
     xr.baseExperience.onStateChangedObservable.add((state) => {
@@ -549,9 +621,8 @@ function addColorLegend(
 }
 
 /** A two-line label (track, artist) on a plane that always faces the viewer. */
-function createHoverLabel(scene: Scene, parent: Node): { mesh: Mesh; setText: (title: string, subtitle: string) => void } {
+function createHoverLabel(scene: Scene): { mesh: Mesh; setText: (title: string, subtitle: string) => void } {
   const mesh = MeshBuilder.CreatePlane('hover-label', { width: 0.4, height: 0.1 }, scene);
-  mesh.parent = parent;
   mesh.billboardMode = Mesh.BILLBOARDMODE_ALL;
   mesh.isPickable = false;
   mesh.renderingGroupId = 1;
@@ -595,6 +666,10 @@ function categoryMaterials(scene: Scene, prefix: string): StandardMaterial[] {
     mat.specularColor = Color3.Black();
     return mat;
   });
+}
+
+function scaleLabel(scale: number): string {
+  return `Scale ×${scale.toFixed(1)}`;
 }
 
 function extent(values: number[]): [number, number] {

@@ -25,11 +25,14 @@ export class PointGrid {
     for (let i = 0; i < count; i++) this.forEachCell(i, (c) => (this.cellPoints[fill[c]++] = i));
   }
 
-  /** Index of the first point whose pick sphere the ray (in chart-local space) hits, or -1. */
-  pick(ray: Ray): number {
+  /**
+   * Index of the first point whose pick sphere the ray (in chart-local space) hits, or -1. `radius`
+   * may be smaller than the grid's, never larger: points are only registered within the grid's.
+   */
+  pick(ray: Ray, radius = this.radius): number {
     const { origin: o, direction } = ray;
     const d = direction.normalizeToNew();
-    const r = this.radius;
+    const r = Math.min(radius, this.radius);
     const r2 = r * r;
     const bound = 0.5 + r;
 
