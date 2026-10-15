@@ -22,9 +22,11 @@ import {
   Ray,
   Scene,
   StandardMaterial,
+  UniversalCamera,
   Vector3,
   VertexBuffer,
   WebXRDefaultExperience,
+  WebXRFeatureName,
   WebXRState,
 } from '@babylonjs/core';
 import { AdvancedDynamicTexture, Button, Control, Rectangle, StackPanel, TextBlock, type TextWrapping } from '@babylonjs/gui';
@@ -44,6 +46,7 @@ import {
 import { PointGrid } from './point-grid';
 
 type ChartType = 'scatter' | 'bar' | 'surface';
+type NavMode = 'orbit' | 'fly';
 
 const CHARTS: { id: ChartType; label: string }[] = [
   { id: 'scatter', label: 'Spotify' },
@@ -55,20 +58,30 @@ const CHARTS: { id: ChartType; label: string }[] = [
 const CHART_CENTER_Y = 1.2;
 const VR_IDLE_STATUS = 'Click the goggles icon (bottom right) to enter VR.';
 const POINT_DIAMETER = 0.006;
+const FLY_HINT = 'W A S D / arrows: move · E / Q: up / down · drag: look';
 
 @Component({
   selector: 'app-charts-xr',
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <canvas #canvas></canvas>
+    <canvas #canvas tabindex="0"></canvas>
     <div class="status">{{ status() }}</div>
-    <div class="switcher" role="group" aria-label="Chart type">
-      @for (c of charts; track c.id) {
-        <button type="button" [class.active]="chart() === c.id" [attr.aria-pressed]="chart() === c.id" (click)="chart.set(c.id)">
-          {{ c.label }}
-        </button>
-      }
+    <div class="toolbar">
+      <div class="switcher" role="group" aria-label="Chart type">
+        @for (c of charts; track c.id) {
+          <button type="button" [class.active]="chart() === c.id" [attr.aria-pressed]="chart() === c.id" (click)="chart.set(c.id)">
+            {{ c.label }}
+          </button>
+        }
+      </div>
+      <div class="switcher" role="group" aria-label="Navigation">
+        <button type="button" [class.active]="nav() === 'orbit'" [attr.aria-pressed]="nav() === 'orbit'" (click)="setNav('orbit')">Orbit</button>
+        <button type="button" [class.active]="nav() === 'fly'" [attr.aria-pressed]="nav() === 'fly'" (click)="setNav('fly')">Fly</button>
+      </div>
     </div>
+    @if (nav() === 'fly') {
+      <div class="hint">{{ flyHint }}</div>
+    }
   `,
   styles: `
     :host { display: block; position: relative; width: 100%; height: 100%; font: 13px system-ui, sans-serif; }
@@ -77,9 +90,11 @@ const POINT_DIAMETER = 0.006;
       position: absolute; top: 12px; left: 12px; padding: 6px 10px;
       color: #fff; background: rgb(0 0 0 / 0.55); border-radius: 6px;
     }
-    .switcher {
-      position: absolute; top: 12px; right: 12px; display: flex; gap: 4px; padding: 4px;
-      background: rgb(0 0 0 / 0.55); border-radius: 8px;
+    .toolbar { position: absolute; top: 12px; right: 12px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+    .switcher { display: flex; gap: 4px; padding: 4px; background: rgb(0 0 0 / 0.55); border-radius: 8px; }
+    .hint {
+      position: absolute; bottom: 12px; left: 12px; padding: 6px 10px;
+      color: #ddd; background: rgb(0 0 0 / 0.55); border-radius: 6px;
     }
     .switcher button {
       font: inherit; color: #ddd; background: transparent; border: 0; border-radius: 5px;
@@ -94,6 +109,9 @@ export class ChartsXr {
   protected readonly charts = CHARTS;
   protected readonly chart = signal<ChartType>('scatter');
   protected readonly status = signal('Loading…');
+  protected readonly nav = signal<NavMode>('orbit');
+  protected readonly flyHint = FLY_HINT;
+  private cameras?: { scene: Scene; orbit: ArcRotateCamera; fly: UniversalCamera };
   private readonly views = signal<Record<ChartType, Node> | null>(null);
   private vrButtons: Partial<Record<ChartType, Button>> = {};
   private xr?: WebXRDefaultExperience;
@@ -138,7 +156,39 @@ export class ChartsXr {
     camera.wheelPrecision = 50;
     camera.minZ = 0.01;
     camera.attachControl(true);
+
+    // Free-flying alternative to the orbit camera; it takes over the orbit camera's pose when enabled.
+    const fly = new UniversalCamera('fly', camera.position.clone(), scene);
+    fly.minZ = camera.minZ;
+    // Babylon scales speed by frame time and inertia; this works out to roughly 1 m/s, a brisk pace for a 1m chart.
+    fly.speed = 0.03;
+    fly.keysUp = [87, 38]; // W, ↑
+    fly.keysDown = [83, 40]; // S, ↓
+    fly.keysLeft = [65, 37]; // A, ←
+    fly.keysRight = [68, 39]; // D, →
+    fly.keysUpward = [69]; // E
+    fly.keysDownward = [81]; // Q
+    this.cameras = { scene, orbit: camera, fly };
     return scene;
+  }
+
+  protected setNav(mode: NavMode): void {
+    if (!this.cameras || mode === this.nav()) return;
+    const { scene, orbit, fly } = this.cameras;
+    if (mode === 'fly') {
+      fly.position.copyFrom(orbit.position);
+      fly.setTarget(orbit.target);
+    } else {
+      // Resume orbiting the chart from wherever the user flew to.
+      orbit.setPosition(fly.position.clone());
+    }
+    const [from, to] = mode === 'fly' ? [orbit, fly] : [fly, orbit];
+    from.detachControl();
+    to.attachControl(true);
+    scene.activeCamera = to;
+    this.nav.set(mode);
+    // Keyboard input goes to the canvas, not the button that was just clicked.
+    this.canvas().nativeElement.focus();
   }
 
   private async buildCharts(scene: Scene): Promise<void> {
@@ -376,8 +426,16 @@ export class ChartsXr {
       );
       return;
     }
-    const ground = anu.create('ground', 'floor', { width: 6, height: 6 }, {}, scene);
-    const xr = await scene.createDefaultXRExperienceAsync({ floorMeshes: [ground] });
+    anu.create('ground', 'floor', { width: 6, height: 6 }, {}, scene);
+    // Fly instead of teleporting: the left thumbstick moves towards wherever the user is looking
+    // (including up and down), the right thumbstick turns.
+    const xr = await scene.createDefaultXRExperienceAsync({ disableTeleportation: true });
+    xr.baseExperience.featuresManager.enableFeature(WebXRFeatureName.MOVEMENT, 'latest', {
+      xrInput: xr.input,
+      movementOrientationFollowsViewerPose: true,
+      movementOrientationFollowsController: false,
+      movementSpeed: 0.3,
+    });
     this.xr = xr;
     this.status.set(VR_IDLE_STATUS);
     xr.baseExperience.onStateChangedObservable.add((state) => {

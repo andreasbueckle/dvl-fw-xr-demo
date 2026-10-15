@@ -29,6 +29,13 @@ run `adb reverse tcp:4200 tcp:4200`, and open `http://localhost:4200` in the hea
 
 When `immersive-vr` is supported, a goggles button appears in the bottom-right corner to enter VR.
 
+## Navigation
+
+- **Desktop:** the **Orbit / Fly** toggle (top right) switches between orbiting the chart with the
+  mouse and flying freely: W A S D or arrow keys to move, E / Q to go up / down, drag to look.
+- **VR:** the left thumbstick flies in the direction you are looking (including up and down); the
+  right thumbstick turns.
+
 ## Layout
 
 - `src/app/charts-xr.ts` — Babylon scene with Spotify scatter (thin instances), bar and surface charts (Anu), chart switcher (HTML + in-VR panel), WebXR setup
