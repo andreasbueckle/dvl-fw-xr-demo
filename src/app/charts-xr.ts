@@ -517,11 +517,11 @@ export class ChartsXr {
     const scaleC = scaleOrdinal<string, StandardMaterial>().domain(species).range(materials);
 
     // ~340 points, so plain meshes (one per penguin, sharing a material per species) are fine here.
-    const diameter = 0.025;
+    const size = 0.025;
     const chart = anu.bind('cot', {}, [{}], scene);
     chart.positionY(CHART_CENTER_Y);
     const marks = chart
-      .bind('sphere', { diameter, segments: 8 }, penguins)
+      .bind('box', { size }, penguins)
       .positionX((d: Penguin) => scaleX(d.billLength))
       .positionY((d: Penguin) => scaleY(d.flipperLength))
       .positionZ((d: Penguin) => scaleZ(d.billDepth))
@@ -537,9 +537,9 @@ export class ChartsXr {
       chart: 'penguins',
       node: root,
       positions,
-      grid: new PointGrid(positions, diameter / 2),
-      radius: () => diameter / 2,
-      highlight: createHighlight(scene, MeshBuilder.CreateSphere('penguin-hover', { diameter: diameter * 1.4, segments: 12 }, scene)),
+      grid: new PointGrid(positions, size / 2),
+      radius: () => size / 2,
+      highlight: createHighlight(scene, MeshBuilder.CreateBox('penguin-hover', { size: size * 1.4 }, scene)),
       describe: (i) => {
         const d = penguins[i];
         return [d.species, `${d.island} · ${d.sex === 'unknown' ? 'sex unknown' : d.sex} · ${d.year}`];
@@ -709,11 +709,6 @@ export class ChartsXr {
       );
       return;
     }
-    const floor = anu.create('ground', 'floor', { width: 6, height: 6 }, {}, scene);
-    const floorMat = new StandardMaterial('floor-mat', scene);
-    floorMat.diffuseColor = Color3.Black();
-    floorMat.specularColor = Color3.Black();
-    floor.material = floorMat;
     // Fly instead of teleporting: the left thumbstick moves towards wherever the user is looking
     // (including up and down), the right thumbstick turns.
     const xr = await scene.createDefaultXRExperienceAsync({ disableTeleportation: true });
