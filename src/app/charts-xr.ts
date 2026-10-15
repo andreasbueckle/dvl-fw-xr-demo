@@ -530,6 +530,7 @@ export class ChartsXr {
       movementOrientationFollowsController: false,
       movementSpeed: XR_MOVEMENT_SPEED * this.scale(),
     }) as WebXRControllerMovement;
+    renderPlaneTextPerEye(scene, xr);
     this.xr = xr;
     this.status.set(VR_IDLE_STATUS);
     xr.baseExperience.onStateChangedObservable.add((state) => {
@@ -548,6 +549,43 @@ function setChartEnabled(root: Node, enabled: boolean): void {
   for (const node of root.getDescendants(false)) {
     if (node instanceof anu.PlaneText) node.setEnabled(enabled);
   }
+}
+
+type TextRendererLike = { render(view: Matrix, projection: Matrix): void };
+
+/**
+ * Anu's PlaneText (axis titles and tick labels) is drawn by an MSDF TextRenderer once per frame,
+ * after the scene has rendered, with scene.activeCamera's matrices. In WebXR each eye is a separate
+ * rig camera with its own framebuffer, so that single pass lands in neither eye and all text
+ * vanishes in the headset. While in XR, draw the same renderers after each eye instead, and mute
+ * Anu's own pass so it can't draw a misplaced copy.
+ */
+function renderPlaneTextPerEye(scene: Scene, xr: WebXRDefaultExperience): void {
+  const inXR = () => xr.baseExperience.state === WebXRState.IN_XR;
+  let eyePass = false;
+  const patched = new WeakSet<TextRendererLike>();
+  const mute = (renderer: TextRendererLike) => {
+    if (patched.has(renderer)) return;
+    patched.add(renderer);
+    const render = renderer.render.bind(renderer);
+    renderer.render = (view, projection) => {
+      if (eyePass || !inXR()) render(view, projection);
+    };
+  };
+
+  scene.onAfterCameraRenderObservable.add((camera) => {
+    if (!inXR() || !xr.baseExperience.camera.rigCameras.includes(camera)) return;
+    eyePass = true;
+    for (const node of scene.transformNodes) {
+      if (!(node instanceof anu.PlaneText) || !node.isEnabled()) continue;
+      // Private in Anu; set once the font has loaded.
+      const renderer = (node as unknown as { textRenderer?: TextRendererLike }).textRenderer;
+      if (!renderer) continue;
+      mute(renderer);
+      renderer.render(camera.getViewMatrix(), camera.getProjectionMatrix());
+    }
+    eyePass = false;
+  });
 }
 
 /** Anu axes have tick labels but no titles; place one beside each axis of the 1m chart cube. */

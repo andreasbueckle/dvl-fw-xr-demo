@@ -32,6 +32,10 @@ When `immersive-vr` is supported, a goggles button appears in the bottom-right c
 
 ## Navigation
 
+- **Scale:** the **Scale** slider (toolbar, and on the in-VR panel) enlarges the charts up to 10×
+  around their centre while the Spotify cubes keep their size, so dense regions spread out. Fly
+  speed grows with it.
+
 - **Desktop:** the **Orbit / Fly** toggle (top right) switches between orbiting the chart with the
   mouse and flying freely: W A S D or arrow keys to move, E / Q to go up / down, drag to look.
 - **VR:** the left thumbstick flies in the direction you are looking (including up and down); the
