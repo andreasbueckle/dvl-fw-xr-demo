@@ -24,7 +24,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      # prebuild runs scripts/prepare-spotify.mjs to generate public/data/spotify.json
+      # prebuild runs scripts/prepare-data.mjs to generate public/data/*.json
       - run: npm run build -- --base-href /${{ github.event.repository.name }}/
       # Serve index.html for unknown paths so client-side routes survive a reload
       - run: cp dist/dvl-fw-xr-demo/browser/index.html dist/dvl-fw-xr-demo/browser/404.html

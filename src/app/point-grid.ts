@@ -26,15 +26,14 @@ export class PointGrid {
   }
 
   /**
-   * Index of the first point whose pick sphere the ray (in chart-local space) hits, or -1. `radius`
-   * may be smaller than the grid's, never larger: points are only registered within the grid's.
+   * Index of the first point whose pick sphere the ray (in chart-local space) hits, or -1.
+   * `radiusOf` gives each point's pick radius; 0 skips the point, and anything above the grid's
+   * radius is capped to it, since points are only registered in cells within that radius.
    */
-  pick(ray: Ray, radius = this.radius): number {
+  pick(ray: Ray, radiusOf: (i: number) => number = () => this.radius): number {
     const { origin: o, direction } = ray;
     const d = direction.normalizeToNew();
-    const r = Math.min(radius, this.radius);
-    const r2 = r * r;
-    const bound = 0.5 + r;
+    const bound = 0.5 + this.radius;
 
     // Clip the ray to the (padded) chart cube.
     let tMin = 0;
@@ -71,7 +70,8 @@ export class PointGrid {
         const pz = this.positions[i * 3 + 2] - o.z;
         const tp = px * d.x + py * d.y + pz * d.z;
         if (tp < 0 || tp >= bestT) continue;
-        if (px * px + py * py + pz * pz - tp * tp <= r2) {
+        const r = Math.min(radiusOf(i), this.radius);
+        if (r > 0 && px * px + py * py + pz * pz - tp * tp <= r * r) {
           best = i;
           bestT = tp;
         }

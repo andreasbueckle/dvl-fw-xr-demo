@@ -7,7 +7,7 @@
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
     "start:xr": "ng serve --host 0.0.0.0 --ssl",
-    "data": "node scripts/prepare-spotify.mjs",
+    "data": "node scripts/prepare-data.mjs",
     "prestart": "npm run data",
     "prebuild": "npm run data",
     "prestart:xr": "npm run data"

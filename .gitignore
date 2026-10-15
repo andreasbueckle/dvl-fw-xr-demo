@@ -43,5 +43,5 @@ __screenshots__/
 .DS_Store
 Thumbs.db
 
-# Generated from data/ by scripts/prepare-spotify.mjs
+# Generated from data/ by scripts/prepare-data.mjs
 /public/data/
